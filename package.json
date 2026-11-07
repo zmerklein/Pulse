@@ -1,0 +1,102 @@
+{
+  "name": "pulse-player",
+  "version": "1.0.0",
+  "description": "Pulse \u2014 a gapless FLAC music player with a reactive visualizer",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist": "electron-builder"
+  },
+  "keywords": [],
+  "author": "Pulse",
+  "license": "MIT",
+  "dependencies": {
+    "music-metadata": "^7.14.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "productName": "Pulse",
+  "build": {
+    "appId": "com.pulse.player",
+    "productName": "Pulse",
+    "copyright": "Pulse",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "fileAssociations": [
+      {
+        "ext": "flac",
+        "name": "FLAC Audio",
+        "role": "Viewer"
+      },
+      {
+        "ext": "mp3",
+        "name": "MP3 Audio",
+        "role": "Viewer"
+      },
+      {
+        "ext": "m4a",
+        "name": "AAC Audio",
+        "role": "Viewer"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "Pulse-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Pulse-Portable-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.music",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Audio"
+    },
+    "publish": null
+  }
+}

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+<title>Pulse</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header class="titlebar">
+    <div class="brand"><span class="logo"></span>Pulse</div>
+    <div class="search">
+      <svg viewBox="0 0 24 24"><path d="M10 3a7 7 0 0 1 5.6 11.2l4.6 4.6-1.4 1.4-4.6-4.6A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>
+      <input id="search" type="search" placeholder="Search artists, albums, songs" spellcheck="false">
+    </div>
+  </header>
+
+  <aside class="sidebar">
+    <nav id="nav">
+      <button data-view="albums"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 14.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-5.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>Albums</button>
+      <button data-view="artists"><svg viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>Artists</button>
+      <button data-view="songs"><svg viewBox="0 0 24 24"><path d="M12 3v10.6A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>Songs</button>
+      <button data-view="queue"><svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-5v7.2a3 3 0 1 0 2 2.8V8h3V6h-5z"/></svg>Now Playing</button>
+    </nav>
+    <div class="side-head">
+      <span>Playlists</span>
+      <button class="mini" id="newPl" title="New playlist"><svg viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg></button>
+    </div>
+    <div id="plList" class="pl-list"></div>
+    <div class="side-foot">
+      <div id="scan" class="scan hidden"><div class="scan-label"></div><div class="scan-bar"><i></i></div></div>
+      <button class="foot-btn" id="foldersBtn"><svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg><span id="libCount">Library folders</span></button>
+    </div>
+  </aside>
+
+  <main id="main" class="main"></main>
+
+  <footer class="player">
+    <div class="np">
+      <div class="np-art" id="npArt"></div>
+      <div class="np-meta">
+        <div class="np-title" id="npTitle">Not playing</div>
+        <div class="np-artist" id="npArtist"></div>
+        <div class="np-badges" id="npBadges"></div>
+      </div>
+    </div>
+    <div class="transport">
+      <div class="buttons">
+        <button class="ib" id="shuffleBtn" title="Shuffle"><svg viewBox="0 0 24 24"><path d="M14.8 4H20v5.2l-2-2-3.6 3.6-1.4-1.4L16.6 6zM4 5.4 5.4 4 20 18.6 18.6 20zM20 14.8V20h-5.2l2-2-3-3 1.4-1.4 3 3z"/></svg></button>
+        <button class="ib" id="prevBtn" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+        <button class="ib play" id="playBtn" title="Play"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="ib" id="nextBtn" title="Next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+        <button class="ib" id="repeatBtn" title="Repeat"><svg viewBox="0 0 24 24" id="repeatIcon"></svg></button>
+      </div>
+      <div class="seek">
+        <span id="tCur">0:00</span>
+        <input type="range" id="seek" min="0" max="1000" value="0" step="1">
+        <span id="tDur">0:00</span>
+      </div>
+    </div>
+    <div class="right">
+      <button class="ib" id="vizBtn" title="Visualizer (V)"><svg viewBox="0 0 24 24"><path d="M4 18h2V9H4zm4 0h2V5H8zm4 0h2v-7h-2zm4 0h2V8h-2zm4 0h2v-4h-2z"/></svg></button>
+      <button class="ib" id="queueBtn" title="Now playing queue"><svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-5v7.2a3 3 0 1 0 2 2.8V8h3V6h-5z"/></svg></button>
+      <button class="ib" id="soundBtn" title="Equalizer & ReplayGain"><svg viewBox="0 0 24 24"><path d="M6 3h2v6h2v2H4V9h2zm0 10h2v8H6zm5 0h2v8h-2v-6zm0-10h2v8h-2zm5 0h2v4h2v2h-6v-2h2zm0 8h2v10h-2z"/></svg></button>
+      <button class="ib" id="muteBtn" title="Mute"><svg viewBox="0 0 24 24" id="volIcon"></svg></button>
+      <input type="range" id="vol" min="0" max="1" step="0.01" value="0.9">
+    </div>
+  </footer>
+</div>
+
+<div id="viz" class="viz hidden">
+  <canvas id="vizCanvas"></canvas>
+  <div class="viz-ui">
+    <div class="viz-info"><div class="viz-art" id="vizArt"></div><div><div class="viz-title" id="vizTitle"></div><div class="viz-sub" id="vizSub"></div></div></div>
+    <div class="viz-ctrls">
+      <button class="pill" id="vizPreset">Nebula</button>
+      <button class="pill" id="vizFull">Fullscreen</button>
+      <button class="pill" id="vizClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="menu" class="menu hidden"></div>
+<div id="toast" class="toast"></div>
+<div id="dropHint" class="drop-hint">Drop to add and play</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
