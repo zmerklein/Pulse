@@ -1,0 +1,424 @@
+From 979dd2f72e87232151fc84de178e2895095de411 Mon Sep 17 00:00:00 2001
+From: zmerklein <z.merklein@4squaremfg.com>
+Date: Sat, 7 Nov 2026 13:42:02 -0600
+Subject: [PATCH] Visualizer: colors follow the chord being played
+
+Detects major/minor triads from a high-resolution chroma analysis and
+steers the palette to the root's color (circle-of-fifths color wheel;
+minor chords less saturated). Toggle with C.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014T1vqddYBhYQ1teESwpE26
+---
+ CHANGELOG.md      |   3 ++
+ README.md         |   1 +
+ src/app.js        |  26 +++++++++-
+ src/chords.js     | 123 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/engine.js     |   5 ++
+ src/gpuviz.js     |  23 ++++++---
+ src/index.html    |   2 +
+ src/styles.css    |   5 ++
+ src/visualizer.js |  18 ++++---
+ 9 files changed, 192 insertions(+), 14 deletions(-)
+ create mode 100644 src/chords.js
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 41a3880..5a507c8 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,8 @@
+ # Changelog
+ 
++## Unreleased
++- Chord colors: real-time major/minor chord detection drives the visualizer palette (pitch → color, circle of fifths; minor = less saturated). Works in all 3D and classic visuals; chord name shown on screen; toggle with C or the Chord colors button
++
+ ## 1.1.0
+ - New 3D visualizer engine (WebGPU) with HDR rendering, bloom and ACES tone mapping
+   - Particle Galaxy: up to 4M GPU-simulated particles (compute shaders), audio-driven orbits, turbulence and beat kicks
+diff --git a/README.md b/README.md
+index 36cf441..8dfe402 100644
+--- a/README.md
++++ b/README.md
+@@ -17,6 +17,7 @@
+   - **Particle Galaxy**: up to 4 million particles simulated on the GPU with compute shaders. Each frequency band orbits at its own radius, and bass, treble and beats drive the motion.
+   - **Spectral Landscape**: a 3D terrain built from a scrolling spectrogram, flown over under a synthwave sun.
+   - **Fractal Core**: a ray-marched Mandelbulb whose shape, glow and surface lighting follow the music.
++  - **Chord colors**: the palette follows the harmony. Pulse detects the major or minor chord being played and shifts every visual to that chord's color, using a pitch-to-color wheel in circle-of-fifths order (C red, G orange, D yellow, A green, E cyan, B sky blue, F♯ blue, C♯ violet, A♭ purple, E♭ magenta, B♭ rose, F crimson). Minor chords use the same hue, less saturated. The current chord is shown in the top-right corner. Press **C** to toggle.
+   - Drag to orbit and scroll to zoom. Quality tiers are **Low / High / Ultra** (particle count, render scale and ray-march steps). Press **I** for live FPS / GPU stats.
+   - The four classic 2D visuals (Nebula, Spectrum Ring, Tunnel, Bars) are still included, and are used automatically on GPUs without WebGPU.
+ - Media keys, the OS now-playing overlay, and opening `.flac` files from Explorer or Finder.
+diff --git a/src/app.js b/src/app.js
+index 4f8d687..d5b6b26 100644
+--- a/src/app.js
++++ b/src/app.js
+@@ -1,6 +1,7 @@
+ import { Engine, EQ_FREQS } from './engine.js';
+ import { Visualizer, PRESETS } from './visualizer.js';
+ import { GpuVisualizer, GPU_PRESETS, QUALITY } from './gpuviz.js';
++import { ChordTracker, pitchHue } from './chords.js';
+ 
+ const api = window.pulse;
+ const $ = (s, r = document) => r.querySelector(s);
+@@ -896,9 +897,27 @@ let vizIndex = store.get('vizIndex', 0), vizQuality = store.get('vizQuality', 'H
+ if (!QUALITY[vizQuality]) vizQuality = 'High';
+ const vizOpen = () => !$('#viz').classList.contains('hidden');
+ 
++// Chord colours: the palette follows the chord being played (pitch → colour, circle of fifths).
++const chords = new ChordTracker(engine.chordAnalyser);
++let chordsOn = store.get('vizChords', true);
++chords.setEnabled(chordsOn);
++chords.onChange = c => {
++  const el = $('#vizChord');
++  el.classList.toggle('off', !c);
++  if (!c) return;
++  el.querySelector('b').textContent = c.name;
++  el.style.setProperty('--chord', `hsl(${Math.round(pitchHue(c.root) * 360)} ${c.minor ? 55 : 90}% 60%)`);
++};
++function toggleChords() {
++  chordsOn = !chordsOn; store.set('vizChords', chordsOn);
++  chords.setEnabled(chordsOn);
++  $('#vizChords').textContent = 'Chord colors: ' + (chordsOn ? 'On' : 'Off');
++  toast(chordsOn ? 'Chord colors on — the palette follows the chords' : 'Chord colors off');
++}
++
+ async function ensureGpu() {
+   if (gpu || gpuFailed) return gpu;
+-  if (!gpuInit) gpuInit = GpuVisualizer.create($('#gpuCanvas'), engine.analyser, { quality: vizQuality }).then(g => {
++  if (!gpuInit) gpuInit = GpuVisualizer.create($('#gpuCanvas'), engine.analyser, { quality: vizQuality, chords }).then(g => {
+     gpu = g; g.isPlaying = () => engine.playing;
+     g.onStats = txt => { $('#vizStats').textContent = txt; };
+     g.onLost = info => {
+@@ -916,7 +935,7 @@ async function ensureGpu() {
+ }
+ function ensureGl() {
+   if (viz) return viz;
+-  try { viz = new Visualizer($('#vizCanvas'), engine.analyser); viz.isPlaying = () => engine.playing; } catch (e) { viz = null; }
++  try { viz = new Visualizer($('#vizCanvas'), engine.analyser, chords); viz.isPlaying = () => engine.playing; } catch (e) { viz = null; }
+   return viz;
+ }
+ async function selectViz(i) {
+@@ -937,6 +956,7 @@ async function selectViz(i) {
+ async function openViz() {
+   $('#viz').classList.remove('hidden');
+   $('#vizQuality').textContent = 'Quality: ' + vizQuality;
++  $('#vizChords').textContent = 'Chord colors: ' + (chordsOn ? 'On' : 'Off');
+   await selectViz(vizIndex);
+   vizWake();
+ }
+@@ -958,6 +978,7 @@ $('#viz').addEventListener('pointermove', vizWake);
+ $('#vizPreset').onclick = () => selectViz(vizIndex + 1);
+ $('#vizQuality').onclick = cycleQuality;
+ $('#vizInfo').onclick = toggleStats;
++$('#vizChords').onclick = toggleChords;
+ $('#vizClose').onclick = closeViz;
+ const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else document.documentElement.requestFullscreen().catch(() => {}); };
+ $('#vizFull').onclick = toggleFull;
+@@ -1072,6 +1093,7 @@ addEventListener('keydown', e => {
+   else if (e.key.toLowerCase() === 'n' && vizOpen()) selectViz(vizIndex + 1);
+   else if (e.key.toLowerCase() === 'q' && vizOpen()) cycleQuality();
+   else if (e.key.toLowerCase() === 'i' && vizOpen()) toggleStats();
++  else if (e.key.toLowerCase() === 'c' && !mod && vizOpen()) toggleChords();
+   else if (e.key.toLowerCase() === 'f' && vizOpen()) toggleFull();
+   else if (e.key.toLowerCase() === 's' && !mod) toggleShuffle();
+   else if (e.key.toLowerCase() === 'r' && !mod) cycleRepeat();
+diff --git a/src/chords.js b/src/chords.js
+new file mode 100644
+index 0000000..ccff4aa
+--- /dev/null
++++ b/src/chords.js
+@@ -0,0 +1,123 @@
++// Pulse chord tracker
++// Listens on a high-resolution AnalyserNode, builds a 12-note chroma vector from spectral peaks,
++// matches it against the 24 major/minor triads and steers the visualizer palette toward the
++// colour of the chord's root.
++//
++// Pitch → colour follows Scriabin's "clavier à lumières": notes go round the colour wheel in
++// circle-of-fifths order, so harmonically close chords get neighbouring colours:
++//   C red · G orange · D yellow · A green · E cyan · B sky blue · F# blue · C# violet
++//   G# purple · D# magenta · A# rose · F crimson
++// Minor chords keep their root's hue but are drawn less saturated (cooler, moodier).
++
++export const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
++export const pitchHue = pc => ((pc * 7) % 12) / 12;          // 0..1, circle of fifths, C = red
++
++const LO = 55, HI = 2100, BASS_HI = 260;   // Hz: chroma range and the bass range used to pick the root
++const EVAL_MS = 50;                        // analysis rate (20 Hz)
++const MIN_SCORE = 0.62;                    // cosine match needed to call a chord
++const SWITCH_EVALS = 3;                    // a new chord must win this many evaluations in a row (~150 ms)
++const HOLD_MS = 1600;                      // keep the last chord this long through unclear passages
++const wrap = x => x - Math.round(x);       // -0.5..0.5
++
++export class ChordTracker {
++  constructor(analyser) {
++    this.an = analyser;
++    this.buf = new Float32Array(analyser.frequencyBinCount);
++    this.binHz = analyser.context.sampleRate / analyser.fftSize;
++    this.kLo = Math.max(2, Math.floor(LO / this.binHz));
++    this.kHi = Math.min(this.buf.length - 2, Math.ceil(HI / this.binHz));
++    this.chroma = new Float32Array(12);     // smoothed, normalised
++    this.bass = new Float32Array(12);
++    this.tuning = 0;                         // cents/100 offset from A440, learned slowly
++    this.enabled = true;
++    this.chord = null;                       // { root, minor, name, score }
++    this.cand = null; this.candN = 0; this.lastSeen = 0; this.tEval = 0;
++    // palette state read by the visualizers
++    this.hue = Math.random(); this.spread = 1; this.sat = 1;
++    this.onChange = null;
++  }
++
++  setEnabled(on) {
++    this.enabled = on;
++    if (!on && this.chord) { this.chord = null; this.onChange?.(null); }
++  }
++
++  /** Call once per frame. `beat` = a beat was detected this frame. */
++  update(now, dt, live, beat) {
++    if (this.enabled && live && now - this.tEval >= EVAL_MS) { this.tEval = now; this.analyze(now); }
++    const c = this.chord, k = 1 - Math.exp(-dt * 3.2);
++    if (c) {
++      this.hue += wrap(pitchHue(c.root) - this.hue) * k;      // glide the shortest way round the wheel
++      this.spread += (0.3 - this.spread) * k;                  // keep the palette close to the chord colour
++      this.sat += ((c.minor ? 0.68 : 1) - this.sat) * k;
++    } else {
++      this.hue += dt * 0.012 + (beat ? 0.05 : 0);              // original free-running colour cycle
++      this.spread += (1 - this.spread) * k * 0.4;
++      this.sat += (1 - this.sat) * k * 0.4;
++    }
++    this.hue -= Math.floor(this.hue);
++  }
++
++  analyze(now) {
++    const b = this.buf; this.an.getFloatFrequencyData(b);
++    let top = -Infinity;
++    for (let k = this.kLo; k <= this.kHi; k++) if (b[k] > top) top = b[k];
++    const raw = new Float32Array(12), bass = new Float32Array(12);
++    if (top < -80) return this.decide(now, null);              // effectively silent
++    const floor = Math.max(top - 48, -95);
++    let ts = 0, tc = 0;
++    for (let k = this.kLo; k <= this.kHi; k++) {
++      const y0 = b[k - 1], y1 = b[k], y2 = b[k + 1];
++      if (!(y1 > y0 && y1 >= y2 && y1 > floor)) continue;      // spectral peaks only
++      const den = y0 - 2 * y1 + y2;
++      const p = den < 0 ? 0.5 * (y0 - y2) / den : 0;           // parabolic interpolation → sub-bin frequency
++      const f = (k + p) * this.binHz;
++      const m = 69 + 12 * Math.log2(f / 440);
++      const amp = Math.pow(10, (y1 - top) / 20);
++      const dRaw = m - Math.round(m);
++      ts += Math.sin(dRaw * 2 * Math.PI) * amp; tc += Math.cos(dRaw * 2 * Math.PI) * amp;
++      const mt = m - this.tuning, n = Math.round(mt), dev = mt - n;
++      const w = amp * Math.cos(Math.PI * dev) ** 2 * (f > 1000 ? 0.6 : 1);
++      const pc = ((n % 12) + 12) % 12;
++      raw[pc] += w;
++      if (f < BASS_HI) bass[pc] += w;
++    }
++    if (tc > 0 || ts !== 0) this.tuning += (Math.atan2(ts, tc) / (2 * Math.PI) - this.tuning) * 0.01;
++    let sum = 0; for (let i = 0; i < 12; i++) sum += raw[i];
++    if (sum <= 0) return this.decide(now, null);
++    let bsum = 0; for (let i = 0; i < 12; i++) bsum += bass[i];
++    const ch = this.chroma, bs = this.bass;
++    for (let i = 0; i < 12; i++) {
++      ch[i] += (raw[i] / sum - ch[i]) * 0.35;
++      bs[i] += ((bsum > 0 ? bass[i] / bsum : 0) - bs[i]) * 0.35;
++    }
++    // template match: cosine similarity with a weighted triad, plus a bonus when the bass agrees with the root
++    let norm = 0; for (let i = 0; i < 12; i++) norm += ch[i] * ch[i];
++    norm = Math.sqrt(norm) || 1;
++    const tn = Math.sqrt(1 + 0.8 * 0.8 + 0.8 * 0.8);
++    let best = null, bestS = -1;
++    for (let r = 0; r < 12; r++) for (const minor of [false, true]) {
++      const t = (r + (minor ? 3 : 4)) % 12, f5 = (r + 7) % 12;
++      const s = (ch[r] + 0.8 * ch[t] + 0.8 * ch[f5]) / (norm * tn) + 0.12 * bs[r] - (minor ? 0.01 : 0);
++      if (s > bestS) { bestS = s; best = { root: r, minor }; }
++    }
++    this.decide(now, bestS >= MIN_SCORE ? { ...best, score: bestS } : null);
++  }
++
++  decide(now, c) {
++    const cur = this.chord;
++    if (!c) {
++      if (cur && now - this.lastSeen > HOLD_MS) { this.chord = null; this.onChange?.(null); }
++      this.cand = null; this.candN = 0;
++      return;
++    }
++    const same = (a, b) => a && b && a.root === b.root && a.minor === b.minor;
++    if (same(c, cur)) { cur.score = c.score; this.lastSeen = now; this.cand = null; this.candN = 0; return; }
++    if (same(c, this.cand)) this.candN++; else { this.cand = c; this.candN = 1; }
++    if (this.candN >= SWITCH_EVALS && (!cur || c.score > cur.score * 0.97 || now - this.lastSeen > 400)) {
++      this.chord = { ...c, name: NOTE_NAMES[c.root] + (c.minor ? 'm' : '') };
++      this.lastSeen = now; this.cand = null; this.candN = 0;
++      this.onChange?.(this.chord);
++    }
++  }
++}
+diff --git a/src/engine.js b/src/engine.js
+index 7449779..a715f5d 100644
+--- a/src/engine.js
++++ b/src/engine.js
+@@ -25,10 +25,15 @@ export class Engine extends EventTarget {
+     this.analyser = ctx.createAnalyser();
+     this.analyser.fftSize = 2048;
+     this.analyser.smoothingTimeConstant = 0.72;
++    // High-resolution tap for chord detection (~2.7 Hz per bin), parallel to the visual analyser.
++    this.chordAnalyser = ctx.createAnalyser();
++    this.chordAnalyser.fftSize = 16384;
++    this.chordAnalyser.smoothingTimeConstant = 0.5;
+     this.master = ctx.createGain();
+     let node = this.input;
+     for (const n of [this.preamp, ...this.filters, this.analyser, this.master]) { node.connect(n); node = n; }
+     this.master.connect(ctx.destination);
++    this.analyser.connect(this.chordAnalyser);
+ 
+     this.cur = null;          // current voice
+     this.nxt = null;          // pre-scheduled next voice (gapless)
+diff --git a/src/gpuviz.js b/src/gpuviz.js
+index 341aeeb..0ae6a64 100644
+--- a/src/gpuviz.js
++++ b/src/gpuviz.js
+@@ -53,8 +53,14 @@ struct U {
+   audio: vec4f,    // bass, mid, treble, beat
+   t: vec4f,        // time, dt, hue, phase
+   params: vec4f,   // preset-specific
++  chord: vec4f,    // x unused, y = palette spread, z unused, w = saturation scale
+ };
+-fn hsv(h: f32, s: f32, v: f32) -> vec3f {
++// Every palette colour is "base hue + offset". The chord tracker sets the base hue to the chord's
++// colour and narrows the offsets (spread) so the whole scene reads as that chord.
++fn hsv(h0: f32, s0: f32, v: f32) -> vec3f {
++  let o = h0 - u.t.z;
++  let h = u.t.z + (o - round(o)) * u.chord.y;
++  let s = s0 * u.chord.w;
+   let k = clamp(abs(fract(h + vec3f(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
+   return v * mix(vec3f(1.0), k, s);
+ }
+@@ -359,8 +365,8 @@ fn aces(x: vec3f) -> vec3f {
+ 
+ /* ------------------------------ audio features ------------------------------ */
+ class Features {
+-  constructor(analyser) {
+-    this.an = analyser;
++  constructor(analyser, chords) {
++    this.an = analyser; this.chords = chords;
+     this.freq = new Uint8Array(analyser.frequencyBinCount);
+     this.time = new Uint8Array(analyser.fftSize);
+     this.data = new Float32Array(BINS * 2);          // spectrum + waveform
+@@ -388,9 +394,13 @@ class Features {
+     const sm = (v, t, u, dn) => v + (t - v) * (t > v ? u : dn);
+     this.bass = sm(this.bass, tb, .55, .09); this.mid = sm(this.mid, tm, .4, .07); this.treb = sm(this.treb, tt, .5, .1);
+     this.avg += (this.bass - this.avg) * 0.02;
+-    if (this.bass > this.avg * 1.22 && this.bass > 0.32 && now - this.lastBeat > 260) { this.beat = 1; this.lastBeat = now; this.hue += 0.05; }
++    let beat = false;
++    if (this.bass > this.avg * 1.22 && this.bass > 0.32 && now - this.lastBeat > 260) { this.beat = 1; this.lastBeat = now; beat = true; }
+     this.beat *= Math.pow(0.88, dt * 60);
+-    this.hue += dt * 0.012; this.phase += dt * (0.3 + this.bass * 1.8);
++    this.phase += dt * (0.3 + this.bass * 1.8);
++    const c = this.chords;
++    if (c) { c.update(now, dt, live, beat); this.hue = c.hue; this.spread = c.spread; this.sat = c.sat; }
++    else { this.hue += dt * 0.012 + (beat ? 0.05 : 0); this.spread = 1; this.sat = 1; }
+   }
+ }
+ 
+@@ -415,7 +425,7 @@ export class GpuVisualizer {
+     this.ctx = canvas.getContext('webgpu');
+     this.format = navigator.gpu.getPreferredCanvasFormat();
+     this.ctx.configure({ device, format: this.format, alphaMode: 'opaque' });
+-    this.f = new Features(analyser);
++    this.f = new Features(analyser, opts.chords);
+     this.preset = 0; this.qualityName = opts.quality || 'High';
+     this.active = false; this.isPlaying = () => true;
+     this.cam = { yaw: 0, pitch: 0.28, dist: 3.6, auto: true, dragging: false, lastInput: 0 };
+@@ -600,6 +610,7 @@ export class GpuVisualizer {
+     if (this.preset === 0) U.set([this.count, Math.max(0.9, this.SW / 1600), brightness, 0], 48);
+     else if (this.preset === 1) U.set([0, 0, 0, this.histRow], 48);
+     else U.set([q.steps, 0, 0, 0], 48);
++    U.set([0, f.spread, 0, f.sat], 52);
+     d.queue.writeBuffer(this.uni, 0, U);
+ 
+     const enc = d.createCommandEncoder();
+diff --git a/src/index.html b/src/index.html
+index 022e490..1e7222f 100644
+--- a/src/index.html
++++ b/src/index.html
+@@ -73,11 +73,13 @@
+   <canvas id="vizCanvas"></canvas>
+   <canvas id="gpuCanvas" class="hidden"></canvas>
+   <div id="vizStats" class="viz-stats hidden"></div>
++  <div id="vizChord" class="viz-chord off"><i></i><b></b></div>
+   <div class="viz-ui">
+     <div class="viz-info"><div class="viz-art" id="vizArt"></div><div><div class="viz-title" id="vizTitle"></div><div class="viz-sub" id="vizSub"></div></div></div>
+     <div class="viz-ctrls">
+       <button class="pill" id="vizPreset" title="Next visual (N)">Nebula</button>
+       <button class="pill" id="vizQuality" title="Quality (Q)">Quality: High</button>
++      <button class="pill" id="vizChords" title="Colors follow the chords (C)">Chord colors: On</button>
+       <button class="pill" id="vizInfo" title="Performance stats (I)">Stats</button>
+       <button class="pill" id="vizFull">Fullscreen</button>
+       <button class="pill" id="vizClose">Close</button>
+diff --git a/src/styles.css b/src/styles.css
+index 3c389d9..52b3348 100644
+--- a/src/styles.css
++++ b/src/styles.css
+@@ -249,6 +249,11 @@ body.dragging-files .drop-hint{display:grid}
+ #gpuCanvas{cursor:grab}
+ #gpuCanvas:active{cursor:grabbing}
+ .viz-stats{position:absolute;top:16px;left:16px;font:12px/1.4 ui-monospace,Consolas,monospace;color:rgba(255,255,255,.8);background:rgba(0,0,0,.45);padding:6px 10px;border-radius:8px;pointer-events:none}
++.viz-chord{position:absolute;top:18px;right:22px;display:flex;align-items:center;gap:10px;padding:6px 14px 6px 10px;border-radius:999px;background:rgba(0,0,0,.35);backdrop-filter:blur(10px);pointer-events:none;transition:opacity .6s,background .6s;--chord:#888}
++.viz-chord i{width:14px;height:14px;border-radius:50%;background:var(--chord);box-shadow:0 0 14px var(--chord);transition:background .5s,box-shadow .5s}
++.viz-chord b{font-size:20px;font-weight:650;min-width:2.2em;text-shadow:0 2px 12px rgba(0,0,0,.6)}
++.viz-chord.off{opacity:0}
++.viz.idle .viz-chord{background:transparent}
+ .viz-ui{pointer-events:none}.viz-ui>*{pointer-events:auto}
+ .viz-ui{position:absolute;inset:auto 0 0 0;display:flex;align-items:flex-end;justify-content:space-between;padding:28px 32px;background:linear-gradient(transparent,rgba(0,0,0,.5));transition:opacity .5s}
+ .viz.idle{cursor:none}
+diff --git a/src/visualizer.js b/src/visualizer.js
+index 04bbf2a..0285469 100644
+--- a/src/visualizer.js
++++ b/src/visualizer.js
+@@ -7,9 +7,10 @@ precision highp float;
+ varying vec2 vUv;
+ uniform sampler2D uPrev, uAudio;
+ uniform vec2 uRes;
+-uniform float uTime, uPhase, uBass, uMid, uTreb, uBeat, uHue, uPreset;
++uniform float uTime, uPhase, uBass, uMid, uTreb, uBeat, uHue, uPreset, uSpread, uSat;
+ 
+-vec3 hsv(float h,float s,float v){vec3 k=clamp(abs(mod(h*6.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.);return v*mix(vec3(1.),k,s);}
++// palette = base hue + offset; the chord tracker narrows offsets (uSpread) around the chord colour
++vec3 hsv(float h,float s,float v){float o=h-uHue;h=uHue+(o-floor(o+.5))*uSpread;s*=uSat;vec3 k=clamp(abs(mod(h*6.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.);return v*mix(vec3(1.),k,s);}
+ float spec(float x){return texture2D(uAudio,vec2(clamp(x,0.,1.),.25)).r;}
+ float wave(float x){return texture2D(uAudio,vec2(clamp(x,0.,1.),.75)).r*2.-1.;}
+ vec2 rot(vec2 p,float a){float c=cos(a),s=sin(a);return mat2(c,-s,s,c)*p;}
+@@ -85,8 +86,8 @@ void main(){vec3 c=texture2D(uTex,vUv).rgb;
+   gl_FragColor=vec4(c,1.);}`;
+ 
+ export class Visualizer {
+-  constructor(canvas, analyser) {
+-    this.canvas = canvas; this.analyser = analyser;
++  constructor(canvas, analyser, chords = null) {
++    this.canvas = canvas; this.analyser = analyser; this.chords = chords;
+     const gl = this.gl = canvas.getContext('webgl', { antialias: false, alpha: false });
+     if (!gl) throw new Error('WebGL unavailable');
+     this.scene = this.program(SCENE_FS); this.blit = this.program(BLIT_FS);
+@@ -162,8 +163,12 @@ export class Visualizer {
+     const sm = (v, t, u, d) => v + (t - v) * (t > v ? u : d);
+     s.bass = sm(s.bass, tb, .55, .09); s.mid = sm(s.mid, tm, .4, .07); s.treb = sm(s.treb, tt, .5, .1);
+     s.avg += (s.bass - s.avg) * 0.02;
+-    if (s.bass > s.avg * 1.22 && s.bass > 0.32 && now - s.lastBeat > 260) { s.beat = 1; s.lastBeat = now; s.hue += 0.06; }
+-    s.beat *= 0.88; s.hue += dt * 0.015; s.phase += dt * (0.35 + s.bass * 2.2);
++    let beat = false;
++    if (s.bass > s.avg * 1.22 && s.bass > 0.32 && now - s.lastBeat > 260) { s.beat = 1; s.lastBeat = now; beat = true; }
++    s.beat *= 0.88; s.phase += dt * (0.35 + s.bass * 2.2);
++    const c = this.chords;
++    if (c) { c.update(now, dt, this.isPlaying(), beat); s.hue = c.hue; s.spread = c.spread; s.sat = c.sat; }
++    else { s.hue += dt * 0.015 + (beat ? 0.06 : 0); s.spread = 1; s.sat = 1; }
+ 
+     gl.bindTexture(gl.TEXTURE_2D, this.audioTex);
+     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, AW, 2, gl.LUMINANCE, gl.UNSIGNED_BYTE, pix);
+@@ -175,6 +180,7 @@ export class Visualizer {
+     gl.uniform2f(u.uRes, this.W, this.H); gl.uniform1f(u.uTime, now / 1000); gl.uniform1f(u.uPhase, s.phase);
+     gl.uniform1f(u.uBass, s.bass); gl.uniform1f(u.uMid, s.mid); gl.uniform1f(u.uTreb, s.treb);
+     gl.uniform1f(u.uBeat, s.beat); gl.uniform1f(u.uHue, s.hue % 1); gl.uniform1f(u.uPreset, this.preset);
++    gl.uniform1f(u.uSpread, s.spread); gl.uniform1f(u.uSat, s.sat);
+     gl.drawArrays(gl.TRIANGLES, 0, 3);
+     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.W, this.H);
+     gl.useProgram(this.blit.p);
+-- 
+2.43.0
+
