@@ -1,5 +1,6 @@
 import { Engine, EQ_FREQS } from './engine.js';
-import { Visualizer } from './visualizer.js';
+import { Visualizer, PRESETS } from './visualizer.js';
+import { GpuVisualizer, GPU_PRESETS, QUALITY } from './gpuviz.js';
 
 const api = window.pulse;
 const $ = (s, r = document) => r.querySelector(s);
@@ -888,17 +889,75 @@ function viewSearch(q) {
 function viewEmptyMsg(msg) { const v = h('div', { class: 'view' }); v.append(h('div', { class: 'empty' }, `<p>${esc(msg)}</p>`)); return v; }
 
 /* ================================ visualizer ================================ */
-let viz = null, vizIdleT;
-function openViz() {
-  try { if (!viz) { viz = new Visualizer($('#vizCanvas'), engine.analyser); viz.isPlaying = () => engine.playing; } }
-  catch (e) { toast('Visualizer needs WebGL, which is unavailable'); return; }
-  $('#viz').classList.remove('hidden'); viz.start(); vizWake();
-}
-function closeViz() { $('#viz').classList.add('hidden'); viz?.stop(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }
+// 3D (WebGPU) visuals first, then the classic 2D (WebGL) ones.
+const VIZ = [...GPU_PRESETS.map((name, i) => ({ kind: 'gpu', i, name })), ...PRESETS.map((name, i) => ({ kind: 'gl', i, name: name + ' · Classic' }))];
+let viz = null, gpu = null, gpuFailed = !GpuVisualizer.supported(), gpuInit = null, vizIdleT;
+let vizIndex = store.get('vizIndex', 0), vizQuality = store.get('vizQuality', 'High'), vizStatsOn = store.get('vizStats', false);
+if (!QUALITY[vizQuality]) vizQuality = 'High';
 const vizOpen = () => !$('#viz').classList.contains('hidden');
+
+async function ensureGpu() {
+  if (gpu || gpuFailed) return gpu;
+  if (!gpuInit) gpuInit = GpuVisualizer.create($('#gpuCanvas'), engine.analyser, { quality: vizQuality }).then(g => {
+    gpu = g; g.isPlaying = () => engine.playing;
+    g.onStats = txt => { $('#vizStats').textContent = txt; };
+    g.onLost = info => {
+      gpu = null; gpuInit = null;
+      if (info?.reason === 'destroyed') return;
+      // The driver reset the GPU (usually a frame took too long): step quality down and restart.
+      const names = Object.keys(QUALITY), k = names.indexOf(vizQuality);
+      if (k > 0) { vizQuality = names[k - 1]; store.set('vizQuality', vizQuality); $('#vizQuality').textContent = 'Quality: ' + vizQuality; }
+      else { gpuFailed = true; }
+      if (vizOpen() && VIZ[vizIndex].kind === 'gpu') { toast(k > 0 ? `GPU reset — lowering quality to ${vizQuality}` : 'GPU reset — using classic visuals'); setTimeout(() => selectViz(vizIndex), 600); }
+    };
+    return g;
+  }).catch(e => { console.error(e); gpuFailed = true; toast('3D visuals need WebGPU, which this GPU/driver does not support — using classic visuals'); return null; });
+  return gpuInit;
+}
+function ensureGl() {
+  if (viz) return viz;
+  try { viz = new Visualizer($('#vizCanvas'), engine.analyser); viz.isPlaying = () => engine.playing; } catch (e) { viz = null; }
+  return viz;
+}
+async function selectViz(i) {
+  vizIndex = ((i % VIZ.length) + VIZ.length) % VIZ.length;
+  let v = VIZ[vizIndex];
+  if (v.kind === 'gpu' && !(await ensureGpu())) { vizIndex = VIZ.findIndex(x => x.kind === 'gl'); v = VIZ[vizIndex]; }
+  store.set('vizIndex', vizIndex);
+  $('#vizPreset').textContent = v.name;
+  const isGpu = v.kind === 'gpu';
+  $('#gpuCanvas').classList.toggle('hidden', !isGpu);
+  $('#vizCanvas').classList.toggle('hidden', isGpu);
+  $('#vizQuality').classList.toggle('hidden', !isGpu);
+  $('#vizStats').classList.toggle('hidden', !(isGpu && vizStatsOn));
+  if (!vizOpen()) return;
+  if (isGpu) { viz?.stop(); gpu.setPreset(v.i); gpu.start(); }
+  else { gpu?.stop(); const g = ensureGl(); if (!g) return toast('Visualizer needs WebGL, which is unavailable'); g.preset = v.i; g.start(); }
+}
+async function openViz() {
+  $('#viz').classList.remove('hidden');
+  $('#vizQuality').textContent = 'Quality: ' + vizQuality;
+  await selectViz(vizIndex);
+  vizWake();
+}
+function closeViz() { $('#viz').classList.add('hidden'); viz?.stop(); gpu?.stop(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }
+function cycleQuality() {
+  const names = Object.keys(QUALITY);
+  vizQuality = names[(names.indexOf(vizQuality) + 1) % names.length];
+  store.set('vizQuality', vizQuality);
+  $('#vizQuality').textContent = 'Quality: ' + vizQuality;
+  gpu?.setQuality(vizQuality);
+  toast(`Quality: ${vizQuality} — ${(QUALITY[vizQuality].particles / 1e6).toFixed(2).replace(/\.?0+$/, '')}M particles, ${Math.round(QUALITY[vizQuality].scale * 100)}% render scale`);
+}
+function toggleStats() {
+  vizStatsOn = !vizStatsOn; store.set('vizStats', vizStatsOn);
+  $('#vizStats').classList.toggle('hidden', !(vizStatsOn && VIZ[vizIndex].kind === 'gpu'));
+}
 function vizWake() { $('#viz').classList.remove('idle'); clearTimeout(vizIdleT); vizIdleT = setTimeout(() => $('#viz').classList.add('idle'), 2500); }
-$('#viz').addEventListener('mousemove', vizWake);
-$('#vizPreset').onclick = () => { $('#vizPreset').textContent = viz.next(); };
+$('#viz').addEventListener('pointermove', vizWake);
+$('#vizPreset').onclick = () => selectViz(vizIndex + 1);
+$('#vizQuality').onclick = cycleQuality;
+$('#vizInfo').onclick = toggleStats;
 $('#vizClose').onclick = closeViz;
 const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else document.documentElement.requestFullscreen().catch(() => {}); };
 $('#vizFull').onclick = toggleFull;
@@ -1010,7 +1069,9 @@ addEventListener('keydown', e => {
   else if (e.key === 'ArrowUp' && mod) { e.preventDefault(); setVol(Math.min(1, +vol.value + 0.05)); }
   else if (e.key === 'ArrowDown' && mod) { e.preventDefault(); setVol(Math.max(0, +vol.value - 0.05)); }
   else if (e.key.toLowerCase() === 'v' && !mod) vizOpen() ? closeViz() : openViz();
-  else if (e.key.toLowerCase() === 'n' && vizOpen()) $('#vizPreset').click();
+  else if (e.key.toLowerCase() === 'n' && vizOpen()) selectViz(vizIndex + 1);
+  else if (e.key.toLowerCase() === 'q' && vizOpen()) cycleQuality();
+  else if (e.key.toLowerCase() === 'i' && vizOpen()) toggleStats();
   else if (e.key.toLowerCase() === 'f' && vizOpen()) toggleFull();
   else if (e.key.toLowerCase() === 's' && !mod) toggleShuffle();
   else if (e.key.toLowerCase() === 'r' && !mod) cycleRepeat();
@@ -1041,4 +1102,4 @@ addEventListener('beforeunload', () => store.set('queue', { ids: Q.ids, order: Q
 })();
 
 // debugging handle (DevTools console)
-window.__pulse = { S, Q, engine, playList, next, go };
+window.__pulse = { S, Q, engine, playList, next, go, selectViz, get gpu() { return gpu; } };

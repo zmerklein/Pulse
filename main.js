@@ -7,6 +7,10 @@ const crypto = require('crypto');
 const { Readable } = require('stream');
 const mm = require('music-metadata');
 
+// Prefer the discrete / high-performance GPU on dual-GPU laptops (the 3D visualizer uses WebGPU compute).
+app.commandLine.appendSwitch('force_high_performance_gpu');
+if (process.platform === 'linux') app.commandLine.appendSwitch('enable-unsafe-webgpu');
+
 protocol.registerSchemesAsPrivileged([{
   scheme: 'pulse',
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true }

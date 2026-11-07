@@ -1,6 +1,6 @@
 {
   "name": "pulse-player",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Pulse \u2014 a gapless FLAC music player with a reactive visualizer",
   "main": "main.js",
   "scripts": {
