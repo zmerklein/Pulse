@@ -25,10 +25,15 @@ export class Engine extends EventTarget {
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0.72;
+    // High-resolution tap for chord detection (~2.7 Hz per bin), parallel to the visual analyser.
+    this.chordAnalyser = ctx.createAnalyser();
+    this.chordAnalyser.fftSize = 16384;
+    this.chordAnalyser.smoothingTimeConstant = 0.5;
     this.master = ctx.createGain();
     let node = this.input;
     for (const n of [this.preamp, ...this.filters, this.analyser, this.master]) { node.connect(n); node = n; }
     this.master.connect(ctx.destination);
+    this.analyser.connect(this.chordAnalyser);
 
     this.cur = null;          // current voice
     this.nxt = null;          // pre-scheduled next voice (gapless)

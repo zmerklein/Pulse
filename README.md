@@ -17,6 +17,7 @@
   - **Particle Galaxy**: up to 4 million particles simulated on the GPU with compute shaders. Each frequency band orbits at its own radius, and bass, treble and beats drive the motion.
   - **Spectral Landscape**: a 3D terrain built from a scrolling spectrogram, flown over under a synthwave sun.
   - **Fractal Core**: a ray-marched Mandelbulb whose shape, glow and surface lighting follow the music.
+  - **Chord colors**: the palette follows the harmony. Pulse detects the major or minor chord being played and shifts every visual to that chord's color, using a pitch-to-color wheel in circle-of-fifths order (C red, G orange, D yellow, A green, E cyan, B sky blue, F♯ blue, C♯ violet, A♭ purple, E♭ magenta, B♭ rose, F crimson). Minor chords use the same hue, less saturated. The current chord is shown in the top-right corner. Press **C** to toggle.
   - Drag to orbit and scroll to zoom. Quality tiers are **Low / High / Ultra** (particle count, render scale and ray-march steps). Press **I** for live FPS / GPU stats.
   - The four classic 2D visuals (Nebula, Spectrum Ring, Tunnel, Bars) are still included, and are used automatically on GPUs without WebGPU.
 - Media keys, the OS now-playing overlay, and opening `.flac` files from Explorer or Finder.

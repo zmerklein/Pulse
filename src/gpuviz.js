@@ -53,8 +53,14 @@ struct U {
   audio: vec4f,    // bass, mid, treble, beat
   t: vec4f,        // time, dt, hue, phase
   params: vec4f,   // preset-specific
+  chord: vec4f,    // x unused, y = palette spread, z unused, w = saturation scale
 };
-fn hsv(h: f32, s: f32, v: f32) -> vec3f {
+// Every palette colour is "base hue + offset". The chord tracker sets the base hue to the chord's
+// colour and narrows the offsets (spread) so the whole scene reads as that chord.
+fn hsv(h0: f32, s0: f32, v: f32) -> vec3f {
+  let o = h0 - u.t.z;
+  let h = u.t.z + (o - round(o)) * u.chord.y;
+  let s = s0 * u.chord.w;
   let k = clamp(abs(fract(h + vec3f(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
   return v * mix(vec3f(1.0), k, s);
 }
@@ -359,8 +365,8 @@ fn aces(x: vec3f) -> vec3f {
 
 /* ------------------------------ audio features ------------------------------ */
 class Features {
-  constructor(analyser) {
-    this.an = analyser;
+  constructor(analyser, chords) {
+    this.an = analyser; this.chords = chords;
     this.freq = new Uint8Array(analyser.frequencyBinCount);
     this.time = new Uint8Array(analyser.fftSize);
     this.data = new Float32Array(BINS * 2);          // spectrum + waveform
@@ -388,9 +394,13 @@ class Features {
     const sm = (v, t, u, dn) => v + (t - v) * (t > v ? u : dn);
     this.bass = sm(this.bass, tb, .55, .09); this.mid = sm(this.mid, tm, .4, .07); this.treb = sm(this.treb, tt, .5, .1);
     this.avg += (this.bass - this.avg) * 0.02;
-    if (this.bass > this.avg * 1.22 && this.bass > 0.32 && now - this.lastBeat > 260) { this.beat = 1; this.lastBeat = now; this.hue += 0.05; }
+    let beat = false;
+    if (this.bass > this.avg * 1.22 && this.bass > 0.32 && now - this.lastBeat > 260) { this.beat = 1; this.lastBeat = now; beat = true; }
     this.beat *= Math.pow(0.88, dt * 60);
-    this.hue += dt * 0.012; this.phase += dt * (0.3 + this.bass * 1.8);
+    this.phase += dt * (0.3 + this.bass * 1.8);
+    const c = this.chords;
+    if (c) { c.update(now, dt, live, beat); this.hue = c.hue; this.spread = c.spread; this.sat = c.sat; }
+    else { this.hue += dt * 0.012 + (beat ? 0.05 : 0); this.spread = 1; this.sat = 1; }
   }
 }
 
@@ -415,7 +425,7 @@ export class GpuVisualizer {
     this.ctx = canvas.getContext('webgpu');
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.ctx.configure({ device, format: this.format, alphaMode: 'opaque' });
-    this.f = new Features(analyser);
+    this.f = new Features(analyser, opts.chords);
     this.preset = 0; this.qualityName = opts.quality || 'High';
     this.active = false; this.isPlaying = () => true;
     this.cam = { yaw: 0, pitch: 0.28, dist: 3.6, auto: true, dragging: false, lastInput: 0 };
@@ -600,6 +610,7 @@ export class GpuVisualizer {
     if (this.preset === 0) U.set([this.count, Math.max(0.9, this.SW / 1600), brightness, 0], 48);
     else if (this.preset === 1) U.set([0, 0, 0, this.histRow], 48);
     else U.set([q.steps, 0, 0, 0], 48);
+    U.set([0, f.spread, 0, f.sat], 52);
     d.queue.writeBuffer(this.uni, 0, U);
 
     const enc = d.createCommandEncoder();

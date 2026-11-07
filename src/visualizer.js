@@ -7,9 +7,10 @@ precision highp float;
 varying vec2 vUv;
 uniform sampler2D uPrev, uAudio;
 uniform vec2 uRes;
-uniform float uTime, uPhase, uBass, uMid, uTreb, uBeat, uHue, uPreset;
+uniform float uTime, uPhase, uBass, uMid, uTreb, uBeat, uHue, uPreset, uSpread, uSat;
 
-vec3 hsv(float h,float s,float v){vec3 k=clamp(abs(mod(h*6.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.);return v*mix(vec3(1.),k,s);}
+// palette = base hue + offset; the chord tracker narrows offsets (uSpread) around the chord colour
+vec3 hsv(float h,float s,float v){float o=h-uHue;h=uHue+(o-floor(o+.5))*uSpread;s*=uSat;vec3 k=clamp(abs(mod(h*6.+vec3(0.,4.,2.),6.)-3.)-1.,0.,1.);return v*mix(vec3(1.),k,s);}
 float spec(float x){return texture2D(uAudio,vec2(clamp(x,0.,1.),.25)).r;}
 float wave(float x){return texture2D(uAudio,vec2(clamp(x,0.,1.),.75)).r*2.-1.;}
 vec2 rot(vec2 p,float a){float c=cos(a),s=sin(a);return mat2(c,-s,s,c)*p;}
@@ -85,8 +86,8 @@ void main(){vec3 c=texture2D(uTex,vUv).rgb;
   gl_FragColor=vec4(c,1.);}`;
 
 export class Visualizer {
-  constructor(canvas, analyser) {
-    this.canvas = canvas; this.analyser = analyser;
+  constructor(canvas, analyser, chords = null) {
+    this.canvas = canvas; this.analyser = analyser; this.chords = chords;
     const gl = this.gl = canvas.getContext('webgl', { antialias: false, alpha: false });
     if (!gl) throw new Error('WebGL unavailable');
     this.scene = this.program(SCENE_FS); this.blit = this.program(BLIT_FS);
@@ -162,8 +163,12 @@ export class Visualizer {
     const sm = (v, t, u, d) => v + (t - v) * (t > v ? u : d);
     s.bass = sm(s.bass, tb, .55, .09); s.mid = sm(s.mid, tm, .4, .07); s.treb = sm(s.treb, tt, .5, .1);
     s.avg += (s.bass - s.avg) * 0.02;
-    if (s.bass > s.avg * 1.22 && s.bass > 0.32 && now - s.lastBeat > 260) { s.beat = 1; s.lastBeat = now; s.hue += 0.06; }
-    s.beat *= 0.88; s.hue += dt * 0.015; s.phase += dt * (0.35 + s.bass * 2.2);
+    let beat = false;
+    if (s.bass > s.avg * 1.22 && s.bass > 0.32 && now - s.lastBeat > 260) { s.beat = 1; s.lastBeat = now; beat = true; }
+    s.beat *= 0.88; s.phase += dt * (0.35 + s.bass * 2.2);
+    const c = this.chords;
+    if (c) { c.update(now, dt, this.isPlaying(), beat); s.hue = c.hue; s.spread = c.spread; s.sat = c.sat; }
+    else { s.hue += dt * 0.015 + (beat ? 0.06 : 0); s.spread = 1; s.sat = 1; }
 
     gl.bindTexture(gl.TEXTURE_2D, this.audioTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, AW, 2, gl.LUMINANCE, gl.UNSIGNED_BYTE, pix);
@@ -175,6 +180,7 @@ export class Visualizer {
     gl.uniform2f(u.uRes, this.W, this.H); gl.uniform1f(u.uTime, now / 1000); gl.uniform1f(u.uPhase, s.phase);
     gl.uniform1f(u.uBass, s.bass); gl.uniform1f(u.uMid, s.mid); gl.uniform1f(u.uTreb, s.treb);
     gl.uniform1f(u.uBeat, s.beat); gl.uniform1f(u.uHue, s.hue % 1); gl.uniform1f(u.uPreset, this.preset);
+    gl.uniform1f(u.uSpread, s.spread); gl.uniform1f(u.uSat, s.sat);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.W, this.H);
     gl.useProgram(this.blit.p);

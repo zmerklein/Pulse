@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Chord colors: real-time major/minor chord detection drives the visualizer palette (pitch → color, circle of fifths; minor = less saturated). Works in all 3D and classic visuals; chord name shown on screen; toggle with C or the Chord colors button
+
 ## 1.1.0
 - New 3D visualizer engine (WebGPU) with HDR rendering, bloom and ACES tone mapping
   - Particle Galaxy: up to 4M GPU-simulated particles (compute shaders), audio-driven orbits, turbulence and beat kicks

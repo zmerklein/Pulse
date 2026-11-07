@@ -1,6 +1,7 @@
 import { Engine, EQ_FREQS } from './engine.js';
 import { Visualizer, PRESETS } from './visualizer.js';
 import { GpuVisualizer, GPU_PRESETS, QUALITY } from './gpuviz.js';
+import { ChordTracker, pitchHue } from './chords.js';
 
 const api = window.pulse;
 const $ = (s, r = document) => r.querySelector(s);
@@ -896,9 +897,27 @@ let vizIndex = store.get('vizIndex', 0), vizQuality = store.get('vizQuality', 'H
 if (!QUALITY[vizQuality]) vizQuality = 'High';
 const vizOpen = () => !$('#viz').classList.contains('hidden');
 
+// Chord colours: the palette follows the chord being played (pitch → colour, circle of fifths).
+const chords = new ChordTracker(engine.chordAnalyser);
+let chordsOn = store.get('vizChords', true);
+chords.setEnabled(chordsOn);
+chords.onChange = c => {
+  const el = $('#vizChord');
+  el.classList.toggle('off', !c);
+  if (!c) return;
+  el.querySelector('b').textContent = c.name;
+  el.style.setProperty('--chord', `hsl(${Math.round(pitchHue(c.root) * 360)} ${c.minor ? 55 : 90}% 60%)`);
+};
+function toggleChords() {
+  chordsOn = !chordsOn; store.set('vizChords', chordsOn);
+  chords.setEnabled(chordsOn);
+  $('#vizChords').textContent = 'Chord colors: ' + (chordsOn ? 'On' : 'Off');
+  toast(chordsOn ? 'Chord colors on — the palette follows the chords' : 'Chord colors off');
+}
+
 async function ensureGpu() {
   if (gpu || gpuFailed) return gpu;
-  if (!gpuInit) gpuInit = GpuVisualizer.create($('#gpuCanvas'), engine.analyser, { quality: vizQuality }).then(g => {
+  if (!gpuInit) gpuInit = GpuVisualizer.create($('#gpuCanvas'), engine.analyser, { quality: vizQuality, chords }).then(g => {
     gpu = g; g.isPlaying = () => engine.playing;
     g.onStats = txt => { $('#vizStats').textContent = txt; };
     g.onLost = info => {
@@ -916,7 +935,7 @@ async function ensureGpu() {
 }
 function ensureGl() {
   if (viz) return viz;
-  try { viz = new Visualizer($('#vizCanvas'), engine.analyser); viz.isPlaying = () => engine.playing; } catch (e) { viz = null; }
+  try { viz = new Visualizer($('#vizCanvas'), engine.analyser, chords); viz.isPlaying = () => engine.playing; } catch (e) { viz = null; }
   return viz;
 }
 async function selectViz(i) {
@@ -937,6 +956,7 @@ async function selectViz(i) {
 async function openViz() {
   $('#viz').classList.remove('hidden');
   $('#vizQuality').textContent = 'Quality: ' + vizQuality;
+  $('#vizChords').textContent = 'Chord colors: ' + (chordsOn ? 'On' : 'Off');
   await selectViz(vizIndex);
   vizWake();
 }
@@ -958,6 +978,7 @@ $('#viz').addEventListener('pointermove', vizWake);
 $('#vizPreset').onclick = () => selectViz(vizIndex + 1);
 $('#vizQuality').onclick = cycleQuality;
 $('#vizInfo').onclick = toggleStats;
+$('#vizChords').onclick = toggleChords;
 $('#vizClose').onclick = closeViz;
 const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); else document.documentElement.requestFullscreen().catch(() => {}); };
 $('#vizFull').onclick = toggleFull;
@@ -1072,6 +1093,7 @@ addEventListener('keydown', e => {
   else if (e.key.toLowerCase() === 'n' && vizOpen()) selectViz(vizIndex + 1);
   else if (e.key.toLowerCase() === 'q' && vizOpen()) cycleQuality();
   else if (e.key.toLowerCase() === 'i' && vizOpen()) toggleStats();
+  else if (e.key.toLowerCase() === 'c' && !mod && vizOpen()) toggleChords();
   else if (e.key.toLowerCase() === 'f' && vizOpen()) toggleFull();
   else if (e.key.toLowerCase() === 's' && !mod) toggleShuffle();
   else if (e.key.toLowerCase() === 'r' && !mod) cycleRepeat();
